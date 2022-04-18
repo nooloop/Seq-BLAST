@@ -9,11 +9,8 @@ For gapped BLAST, alignments within a certain neighborhood are then selected for
 Substitution matrices:
 
  > BLASTn ungapped: +5/-4 match/mismatch
- 
  > BLASTn gapped  : +1/-3 match/mismatch, -5/-2 gap open/extend
- 
  > BLASTp ungapped: BLOSUM62 match/mismatch for BLASTp ungapped
- 
  > BLASTp gapped  : BLOSUM62 match/mismatch, -11, -1 gap open/extend
 
 # Usage:
