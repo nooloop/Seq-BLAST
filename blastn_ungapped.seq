@@ -1,0 +1,141 @@
+from bio import *
+from getopt import getopt, GetoptError
+from math import log, log2
+import sys
+import time
+
+def run_blastn_ungapped(q_input, t_input, E):
+    
+    t1 = time.time()
+    
+    # initialize query and target sequence information and k-mer indices:
+    
+    q = s""
+    t = s""
+
+    q_name = ""
+    t_name = ""
+
+    q_index = {}
+    t_index = {}
+
+    K: Static[int] = 11
+
+    # build query sequence k-mer dictionary/hash-table:
+
+    for read in FASTA(q_input, fai = False):
+        q = read.seq
+        q_name = read.name
+        for pos, kmer in q.kmers_with_pos(k=K, step=1):
+            if kmer not in q_index:
+                q_index[kmer] = [pos]
+            else:
+                q_index[kmer].append(pos)
+
+    # build target sequence k-mer dictionary/hash-table based on query k-mers:
+
+    for read in FASTA(t_input, fai = False):
+        t = read.seq
+        t_name = read.name
+        for pos, kmer in t.kmers_with_pos(k=K, step = 1):
+            if kmer in q_index:
+                if kmer not in t_index:
+                    t_index[kmer] = [pos]
+                else:
+                    t_index[kmer].append(pos)
+
+    q_length = len(q)
+    t_length = len(t)
+    
+    # define substitution_blastn matrix:
+
+    def substitution_blastn(qp, tp):
+        if qp == tp:
+            return (5, "|")
+        else:
+            return (-4, " ")
+       
+    # define function to conduct ungapped extension of exact k-mer matches:
+
+    def ungapped_align(qpos, tpos):
+        
+        ext_f = ""
+        ext_b = ""
+        
+        q_pos = [qpos, qpos-1]
+        t_pos = [tpos, tpos-1]
+        
+        algn_score = [0, 0, 0]
+        max_score = [0, 0]
+        
+        while q_pos[0] < q_length and t_pos[0] < t_length:
+            algn = substitution_blastn(q[q_pos[0]], t[t_pos[0]])    
+            if algn[0] + algn_score[0] > max_score[0]:
+                algn_score[0] += algn[0]
+                max_score[0] = algn_score[0]
+                ext_f += algn[1]
+                if q_pos[0]-qpos == K:
+                    algn_score[1] = algn_score[0]
+                    algn_score[2] = algn_score[0]
+                    max_score[1] = algn_score[0]
+                q_pos[0] += 1
+                t_pos[0] += 1
+            else:
+                break
+            
+        while q_pos[1] > -1 and t_pos[1] > -1:
+            algn = substitution_blastn(q[q_pos[1]], t[t_pos[1]])
+            if algn[0] + algn_score[1] > max_score[1]:
+                algn_score[1] += algn[0]
+                max_score[1] = algn_score[1]
+                ext_b = algn[1]+ext_b
+                q_pos[1] -= 1
+                t_pos[1] -= 1
+            else:
+                break
+        
+        q_hit = q[q_pos[1]+1:q_pos[0]]
+        t_hit = t[t_pos[1]+1:t_pos[0]]
+        q_begin = q_pos[1]+1
+        t_begin = t_pos[1]+1
+        q_end = q_pos[0]-1
+        t_end = t_pos[0]-1
+        align_pattern = ext_b+ext_f
+        s = algn_score[0]+algn_score[1]-algn_score[2]
+        bs = 2*len(q_hit)
+        e = (q_length-len(q_hit)+1)*(t_length-len(t_hit)+1)*2.0**(-2.0*len(q_hit))
+        
+        return (q_hit, q_begin, q_end, align_pattern, t_hit, t_begin, t_end, s, bs, e)
+        
+    print("Build Time:", time.time()-t1, "seconds.")
+    t2 = time.time()
+    
+    # find hits of significance:
+    
+    hits = {}
+    hits_list = []
+    for kmer in q_index.keys():
+        if kmer in t_index:
+            for qpos in q_index[kmer]:
+                for tpos in t_index[kmer]:
+                    alignment = ungapped_align(qpos, tpos)
+                    if alignment not in hits and alignment[9] < E and alignment[7] > 0:
+                        hits[alignment] = True
+                        hits_list.append(alignment)
+                        
+    final = sorted(hits_list, key=lambda x: x[9])
+    
+    print("Find  Time:", time.time()-t2, "seconds.")
+    
+    # print results to file:
+    
+    with open("blast_N_ungapped_output.txt", "w") as f:
+        print("Query:", q_name, q_length, "\nTarget:", t_name, t_length, f"\n\nk-mer length         : {K}\nexpectation threshold: {E}\n", file = f)
+        for i in range(0, len(final)):
+            whitespace = max(len(f"query {final[i][1]} "), len(f"target {final[i][6]} "))
+            print(f"query {final[i][1]}".rjust(whitespace, " "), f"{final[i][0]} {final[i][2]}", file = f)
+            print(" "*whitespace, final[i][3], file = f)
+            print(f"target {final[i][5]}".rjust(whitespace, " "), f"{final[i][4]} {final[i][6]}", file = f)
+            print(f"Sub-Score: {final[i][7]} Bit-Score: {final[i][8]} Expect: {final[i][9]}\n", file = f)
+        
+        f.close()

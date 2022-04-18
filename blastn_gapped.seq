@@ -1,0 +1,279 @@
+from bio import *
+from getopt import getopt, GetoptError
+from math import log, log2
+import sys
+import time
+
+def run_blastn_gapped(q_input, t_input, E, n):
+    
+    t1 = time.time()
+    
+    # initialize query and target sequence information and k-mer indices:
+
+    q = s""
+    t = s""
+
+    q_name = ""
+    t_name = ""
+
+    q_index = {}
+    t_index = {}
+
+    K: Static[int] = 11
+
+    # build query sequence k-mer dictionary/hash-table:
+
+    for read in FASTA(q_input, fai = False):
+        q = read.seq
+        q_name = read.name
+        for pos, kmer in q.kmers_with_pos(k=K, step=1):
+            if kmer not in q_index:
+                q_index[kmer] = [pos]
+            else:
+                q_index[kmer].append(pos)
+
+    # build target sequence k-mer dictionary/hash-table based on query k-mers:
+
+    for read in FASTA(t_input, fai = False):
+        t = read.seq
+        t_name = read.name
+        for pos, kmer in t.kmers_with_pos(k=K, step = 1):
+            if kmer in q_index:
+                if kmer not in t_index:
+                    t_index[kmer] = [pos]
+                else:
+                    t_index[kmer].append(pos)
+
+    q_length = len(q)
+    t_length = len(t)
+    
+    # define substitution_blastn matrix:
+
+    def substitution_blastn(qp, tp):
+        if qp == tp:
+            return (1, "|")
+        else:
+            return (-3, " ")
+       
+    # define function to conduct ungapped extension of exact k-mer matches:
+
+    def ungapped_align(qpos, tpos):
+        
+        ext_f = ""
+        ext_b = ""
+        
+        q_pos = [qpos, qpos-1]
+        t_pos = [tpos, tpos-1]
+        
+        algn_score = [0, 0, 0]
+        max_score = [0, 0]
+        
+        while q_pos[0] < q_length and t_pos[0] < t_length:
+            algn = substitution_blastn(q[q_pos[0]], t[t_pos[0]])    
+            if algn[0] + algn_score[0] > max_score[0]:
+                algn_score[0] += algn[0]
+                max_score[0] = algn_score[0]
+                ext_f += algn[1]
+                if q_pos[0]-qpos == K:
+                    algn_score[1] = algn_score[0]
+                    algn_score[2] = algn_score[0]
+                    max_score[1] = algn_score[0]
+                q_pos[0] += 1
+                t_pos[0] += 1
+            else:
+                break
+            
+        while q_pos[1] > -1 and t_pos[1] > -1:
+            algn = substitution_blastn(q[q_pos[1]], t[t_pos[1]])
+            if algn[0] + algn_score[1] > max_score[1]:
+                algn_score[1] += algn[0]
+                max_score[1] = algn_score[1]
+                ext_b = algn[1]+ext_b
+                q_pos[1] -= 1
+                t_pos[1] -= 1
+            else:
+                break
+        
+        q_hit = q[q_pos[1]+1:q_pos[0]]
+        t_hit = t[t_pos[1]+1:t_pos[0]]
+        q_begin = q_pos[1]+1
+        t_begin = t_pos[1]+1
+        q_end = q_pos[0]-1
+        t_end = t_pos[0]-1
+        align_pattern = ext_b+ext_f
+        s = algn_score[0]+algn_score[1]-algn_score[2]
+        bs = 2*len(q_hit)
+        e = (q_length-len(q_hit)+1)*(t_length-len(t_hit)+1)*2.0**(-2.0*len(q_hit))
+        
+        return (q_hit, q_begin, q_end, align_pattern, t_hit, t_begin, t_end, s, bs, e)
+    
+    # define function to return expanded Smith-Waterman alignment from alignment CIGAR string:
+    
+    def cigar(cig, qa, ta):
+        qaline = ""
+        taline = ""
+        aline = ""
+        qp = 0
+        tp = 0
+        for size, operate in cig:
+            match operate:
+                case 'M' | '=' | 'X':
+                    for i in range(0, size):
+                        qaline += str(qa[qp])
+                        qp += 1
+                        taline += str(ta[tp])
+                        tp += 1
+                        aline += "|"
+                case 'I' | 'S': 
+                    for i in range(0, size):
+                        taline += "-"
+                        qaline += str(qa[qp])
+                        qp += 1
+                        aline += " "
+                case 'D' | 'N' | 'H': 
+                    for i in range(0, size):
+                        qaline += "-"
+                        taline += str(ta[tp])
+                        tp += 1
+                        aline += " "
+                case _: pass
+        return qaline[1:], aline[1:], taline[1:]
+        
+    print("Build Time:", time.time()-t1, "seconds.")
+    t2 = time.time()
+    
+    # find initial hits of significance:
+    
+    hits = {}
+    hits_list = []
+    count = 0
+    for kmer in q_index.keys():
+        if kmer in t_index:
+            for qpos in q_index[kmer]:
+                for tpos in t_index[kmer]:
+                    alignment = ungapped_align(qpos, tpos)
+                    if alignment not in hits and alignment[9] < E:
+                        hits[alignment] = count
+                        hits_list.append(alignment)
+                        count += 1
+    hits_ = {v: k for k, v in hits.items()}
+    
+    # find neighboring hits of significance and align by Smith-Waterman:
+    
+    hit_keys = list(hits_.keys())
+    alignments_d = {}
+    alignments_s = hits_.copy()
+    for i in range(0, len(hit_keys)):
+        for j in range(i+1, len(hit_keys)):
+            qab = hits_[hit_keys[i]][1]
+            qae = hits_[hit_keys[i]][2]
+            tab = hits_[hit_keys[i]][5]
+            tae = hits_[hit_keys[i]][6]
+            qbb = hits_[hit_keys[j]][1]
+            qbe = hits_[hit_keys[j]][2]
+            tbb = hits_[hit_keys[j]][5]
+            tbe = hits_[hit_keys[j]][6]
+            if (qbb > qae and tbb > tae):
+                if (qbb - qae < n) and (tbb - tae < n):
+                    algn = q[qae:qbb]@t[tae:tbb]
+                    alignments_d[[hit_keys[i], hit_keys[j]]] = (cigar(algn[0], q[qae:qbb], t[tae:tbb]), algn[1]-5.8)
+                    if hit_keys[i] in alignments_s:
+                        del alignments_s[hit_keys[i]]                        
+                    if hit_keys[j] in alignments_s:
+                        del alignments_s[hit_keys[j]]                        
+            if (qab > qbe and tab > tbe):
+                if (qab - qbe < n) and (tab - tbe < n):
+                    algn = q[qbe:qab]@t[tbe:tab]
+                    alignments_d[[hit_keys[j], hit_keys[i]]] = (cigar(algn[0], q[qbe:qab], t[tbe:tab]), algn[1]-5.8)
+                    if hit_keys[i] in alignments_s:
+                        del alignments_s[hit_keys[i]]
+                    if hit_keys[j] in alignments_s:
+                        del alignments_s[hit_keys[j]]
+    
+    algn_keys = list(alignments_d.keys())
+    final_alignments = {}
+    for i in range(0, len(algn_keys)):
+        key = [algn_keys[i]]
+        value = [alignments_d[algn_keys[i]]]
+        join_lastf = i
+        join_lastb = i
+        for j in range(i+1, len(algn_keys)):
+            if algn_keys[join_lastf][1] == algn_keys[j][0]:
+                key.append(algn_keys[j])
+                value.append(alignments_d[algn_keys[j]])
+                join_lastf += 1
+            if algn_keys[join_lastf][0] == algn_keys[j][1]:
+                key.insert(0, algn_keys[j])
+                value.insert(0, alignments_d[algn_keys[j]])
+                join_lastf += 1
+        if i > 1:
+            for j in range(i-1, -1, -1):
+                if algn_keys[join_lastb][1] == algn_keys[j][0]:
+                    key.append(algn_keys[j])
+                    value.append(alignments_d[algn_keys[j]])
+                    join_lastb -= 1
+                if algn_keys[join_lastb][0] == algn_keys[j][1]:
+                    key.insert(0, algn_keys[j])
+                    value.insert(0, alignments_d[algn_keys[j]])
+                    join_lastb -= 1
+        if key not in final_alignments:
+            final_alignments[key] = value
+
+    # build final report:
+
+    report = {}
+    keys = list(final_alignments.keys())
+    for i in range(0, len(keys)):
+        qaln = ""
+        aaln = ""
+        taln = ""
+        qb = 0
+        qe = 0
+        tb = 0
+        te = 0
+        s = 0
+        for j in range(0, len(keys[i])):
+            if j == 0:
+                qb = hits_[keys[i][j][0]][1]
+                tb = hits_[keys[i][j][0]][5]
+                s = int(hits_[keys[i][j][0]][7])+int(final_alignments[keys[i]][j][1])+int(hits_[keys[i][j][1]][7])
+                qaln += str(hits_[keys[i][j][0]][0])+final_alignments[keys[i]][j][0][0]+str(hits_[keys[i][j][1]][0])
+                aaln += hits_[keys[i][j][0]][3]+final_alignments[keys[i]][j][0][1]+hits_[keys[i][j][1]][3]
+                taln += str(hits_[keys[i][j][0]][4])+final_alignments[keys[i]][j][0][2]+str(hits_[keys[i][j][1]][4])
+            else:
+                s += int(final_alignments[keys[i]][j][1])+int(hits_[keys[i][j][1]][7])
+                qaln += final_alignments[keys[i]][j][0][0]+str(hits_[keys[i][j][1]][0])
+                aaln += final_alignments[keys[i]][j][0][1]+hits_[keys[i][j][1]][3]
+                taln += final_alignments[keys[i]][j][0][2]+str(hits_[keys[i][j][1]][4])
+            if j == len(keys[i])-1:
+                qe = hits_[keys[i][j][1]][2]
+                te = hits_[keys[i][j][1]][6]
+                        
+        if (qaln, aaln, taln, qb, qe, tb, te) not in report:
+            report[(qaln, aaln, taln, qb, qe, tb, te)] = (s, (0.255*s-log(0.035))/log(2), t_length*q_length*2**(-(0.255*s-log(0.035))/log(2)))
+
+    keyz = list(alignments_s.keys())
+    for i in range(0, len(keyz)):
+        report[(str(alignments_s[keyz[i]][0]), alignments_s[keyz[i]][3], str(alignments_s[keyz[i]][4]), alignments_s[keyz[i]][1], alignments_s[keyz[i]][2], alignments_s[keyz[i]][5], alignments_s[keyz[i]][6])] = (alignments_s[keyz[i]][7], float(alignments_s[keyz[i]][8]), alignments_s[keyz[i]][9])
+        
+    f = []
+    keez = list(report.keys())    
+    for i in range(0, len(keez)):
+        f.append((*keez[i], *report[keez[i]]))
+    final = sorted(f, key=lambda x: x[9])
+
+    print("Find  Time:", time.time()-t2, "seconds.")
+
+    # print results to file:
+    
+    with open("blast_N_gapped_output.txt", "w") as f:
+        print("Query:", q_name, q_length, "\nTarget:", t_name, t_length, f"\n\nk-mer length         : {K}\nexpectation threshold: {E}\nneighbor hit distance: {n}\n", file = f)
+        for i in range(0, len(final)):
+            if final[i][9] < E and final[i][7] > 0:
+                whitespace = max(len(f"query {final[i][3]} "), len(f"target {final[i][5]} "))
+                print(f"query {final[i][3]}".rjust(whitespace, " "), f"{final[i][0]} {final[i][4]}", file = f)
+                print(" "*whitespace, final[i][1], file = f)
+                print(f"target {final[i][5]}".rjust(whitespace, " "), f"{final[i][2]} {final[i][6]}", file = f)
+                print(f"Sub-Score: {final[i][7]} Bit-Score: {final[i][8]} Expect: {final[i][9]}\n", file = f)
+
+        f.close()
