@@ -103,7 +103,7 @@ def run_blastn_gapped(q_input, t_input, E, n):
         align_pattern = ext_b+ext_f
         s = algn_score[0]+algn_score[1]-algn_score[2]
         bs = 2*len(q_hit)
-        e = (q_length-len(q_hit)+1)*(t_length-len(t_hit)+1)*2.0**(-2.0*len(q_hit))
+        e = q_length*t_length*2.0**(-2.0*len(q_hit))
         
         return (q_hit, q_begin, q_end, align_pattern, t_hit, t_begin, t_end, s, bs, e)
     
@@ -158,7 +158,7 @@ def run_blastn_gapped(q_input, t_input, E, n):
                         count += 1
     hits_ = {v: k for k, v in hits.items()}
     
-    # find neighboring hits of significance and align by Smith-Waterman:
+    # find neighboring hits of significance and align by Smith-Waterman (IMPROVE THIS):
     
     hit_keys = list(hits_.keys())
     alignments_d = {}
@@ -189,7 +189,9 @@ def run_blastn_gapped(q_input, t_input, E, n):
                         del alignments_s[hit_keys[i]]
                     if hit_keys[j] in alignments_s:
                         del alignments_s[hit_keys[j]]
-    
+
+    # Join multiple neighbors (IMPROVE THIS LOOP):
+	
     algn_keys = list(alignments_d.keys())
     final_alignments = {}
     for i in range(0, len(algn_keys)):

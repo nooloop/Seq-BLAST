@@ -2,9 +2,9 @@
 
 Implementation of the BLAST algorithm in the [Seq](https://seq-lang.org/) programming language. Gapped and ungapped nucleotide and protein 2-sequence BLASTing is supported.
 
-The algorithm works basically as follows. First, k-mers (11-mers for nucleotide sequences and 3-mers for protein sequences) for the query sequence are found, and then exact matches to these in the target sequence. Each match is extended in both directions as far as possible (requiring exact matching for nucleotide sequences, and less-than-exact to a certain extent, though ungapped, matching for protein sequences). For ungapped BLAST, these alignments, if determined significant, are reported. 
+The algorithm works basically as follows. First, k-mers (11-mers for nucleotide sequences and 3-mers for protein sequences) for the query sequence are found, and then exact matches to these in the target sequence. Each match is extended in both directions as far as possible (requiring exact matching for nucleotide sequences, and less-than-exact to a certain extent, though ungapped, matching for protein sequences). For ungapped BLAST, these alignments are reported if determined significant. 
 
-For gapped BLAST, alignments within a certain neighborhood are then selected for further, gapped extension, where the sequence sections between neighbor alignments are aligned using Smith-Waterman. These improved alignments are reported if determined significant.
+For gapped BLAST, alignments within a certain neighborhood are then selected for further gapped extension, where the sequence sections between neighbor alignments are aligned using Smith-Waterman. These improved alignments are reported if determined significant.
 
 Substitution matrices:
 

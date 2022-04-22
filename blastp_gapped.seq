@@ -122,7 +122,7 @@ def run_blastp_gapped(q_input, t_input, T, E, n):
         align_pattern = ext_b+ext_f
         s = algn_score[0]+algn_score[1]-algn_score[2]
         bs = (0.318*s-log(0.13))/log(2)
-        e = t_length*q_length*2.0**(-((0.318*s-log(0.13))/log(2)))
+        e = q_length*t_length*2.0**(-((0.318*s-log(0.13))/log(2)))
         
         return (q_hit, q_begin, q_end, align_pattern, t_hit, t_begin, t_end, s, bs, e)
     
@@ -171,7 +171,7 @@ def run_blastp_gapped(q_input, t_input, T, E, n):
             for qpos in q_index[kmer]:
                 for tpos in t_index[kmer]:
                     alignment = ungapped_align(qpos, tpos)
-                    if alignment not in hits and alignment[9] < 100:
+                    if alignment not in hits and alignment[9] < E:
                         hits[alignment] = count
                         hits_list.append(alignment)
                         count += 1
@@ -208,6 +208,8 @@ def run_blastp_gapped(q_input, t_input, T, E, n):
                         del alignments_s[hit_keys[i]]
                     if hit_keys[j] in alignments_s:
                         del alignments_s[hit_keys[j]]
+    
+    # Join multiple neighbors (IMPROVE THIS LOOP):
     
     algn_keys = list(alignments_d.keys())
     final_alignments = {}

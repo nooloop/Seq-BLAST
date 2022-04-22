@@ -103,7 +103,7 @@ def run_blastn_ungapped(q_input, t_input, E):
         align_pattern = ext_b+ext_f
         s = algn_score[0]+algn_score[1]-algn_score[2]
         bs = 2*len(q_hit)
-        e = (q_length-len(q_hit)+1)*(t_length-len(t_hit)+1)*2.0**(-2.0*len(q_hit))
+        e = q_length*t_length*2.0**(-2.0*len(q_hit))
         
         return (q_hit, q_begin, q_end, align_pattern, t_hit, t_begin, t_end, s, bs, e)
         
